@@ -32,6 +32,7 @@ import {
     buildPresencePassage,
 } from './presence.js';
 import { initPromptPreview, maybePreviewPrompt } from './promptPreview.js';
+import { initHistoryDestroy } from './historyDestroy.js';
 
 const MODULE_NAME = 'summaryception';
 const LOG_PREFIX = '[Summaryception]';
@@ -3089,6 +3090,19 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     });
 
     initPromptPreview({ abortSummarization, log });
+
+    initHistoryDestroy({
+        getChatStore,
+        isPresenceGroupMode,
+        getGroupMembers,
+        getMemberStore,
+        unghostAllMessages,
+        saveChatStore,
+        ghostMessagesUpTo,
+        updateInjection,
+        updateUI,
+        log,
+    });
 
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
