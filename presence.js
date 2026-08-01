@@ -359,47 +359,25 @@ async function runParallelMemberCatchup(members) {
 
 function buildPresencePassage(chat, startIdx, endIdx, charAvatar) {
     const lines = [];
+    const isOmniscient = charAvatar && isOmniscientMember(charAvatar);
     for (let i = startIdx; i <= endIdx; i++) {
         const m = chat[i];
         if (!m) continue;
         if (!m.mes || !m.mes.trim()) continue;
 
-        // Always include user messages — they provide essential context
-        // and should never be filtered by the Presence present array.
-        if (m.is_user) {
-            lines.push(`Player: ${m.mes.trim()}`);
-            continue;
-        }
-
-        if (charAvatar && Array.isArray(m.present) && !isOmniscientMember(charAvatar)) {
+        // Filter both user and assistant messages by the character's presence.
+        // User messages carry a present array too (set by Presence) and must be
+        // filtered so a character only receives context from scenes they were in.
+        if (!isOmniscient && Array.isArray(m.present)) {
             if (!m.present.includes(charAvatar) && !m.present.includes('presence_universal_tracker')) {
                 continue;
             }
         }
 
-        lines.push(`Assistant: ${m.mes.trim()}`);
+        const speaker = m.is_user ? 'Player' : 'Assistant';
+        lines.push(`${speaker}: ${m.mes.trim()}`);
     }
     return lines.join('\n');
-}
-
-async function onMessageReceivedPresence(messageIndex) {
-    const { chat } = SillyTavern.getContext();
-    const msg = chat[messageIndex];
-
-    const senderAvatar = msg.force_avatar
-        || (msg.name && SillyTavern.getContext().characters?.find(c => c?.name === msg.name)?.avatar)
-        || null;
-
-    const msgPresent = Array.isArray(msg.present) ? msg.present : [];
-
-    const members = getGroupMembers();
-    const membersToCheck = members.filter(m =>
-        msgPresent.includes(m.avatar) || m.avatar === senderAvatar || isOmniscientMember(m.avatar)
-    );
-
-    for (const member of membersToCheck) {
-        await maybeSummarizeForMember(member.avatar);
-    }
 }
 
 function assembleSummaryBlockForMember(avatar) {
@@ -514,6 +492,7 @@ function initPresence(context) {
 export {
     initPresence,
     isPresenceGroupMode,
+    isOmniscientMember,
     getGroupMembers,
     getMemberStore,
     getMemberStoreKey,
@@ -523,4 +502,5 @@ export {
     getMembersWithStores,
     cancelPresenceCatchup,
     isPresenceCatchupRunning,
+    buildPresencePassage,
 };

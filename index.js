@@ -19,6 +19,7 @@ import {
 import {
     initPresence,
     isPresenceGroupMode,
+    isOmniscientMember,
     getGroupMembers,
     getMemberStore,
     getMemberStoreKey,
@@ -28,7 +29,10 @@ import {
     getMembersWithStores,
     cancelPresenceCatchup,
     isPresenceCatchupRunning,
+    buildPresencePassage,
 } from './presence.js';
+import { initPromptPreview, maybePreviewPrompt } from './promptPreview.js';
+import { initHistoryDestroy } from './historyDestroy.js';
 
 const MODULE_NAME = 'summaryception';
 const LOG_PREFIX = '[Summaryception]';
@@ -86,6 +90,7 @@ Write in short phrases, no more than 20; output must be a single line:`,
 
     debugMode: false,
     traceMode: false,
+    previewPrompt: false,
 
     // ─── Connection Settings ─────────────────────────────────────
     connectionSource: 'default',          // 'default' | 'profile' | 'ollama' | 'openai'
@@ -803,6 +808,8 @@ async function callSummarizer(storyTxt, contextStr, charNameOverride) {
         .replace('{{char_name}}', charNameOverride || getCharName())
         .replace('{{context_str}}', contextStr || '(none yet)')
         .replace('{{story_txt}}', storyTxt);
+
+    if (!await maybePreviewPrompt(s, prompt)) return '';
 
     log('── Summarizer Call ──');
     log('Context str length:', contextStr.length, 'chars');
@@ -1593,7 +1600,7 @@ async function onMessageReceivedPresence(messageIndex) {
         const msgPresent = Array.isArray(msg.present) ? msg.present : [];
         const members = getGroupMembers();
         const membersToCheck = members.filter(m =>
-            msgPresent.includes(m.avatar) || m.avatar === senderAvatar
+            msgPresent.includes(m.avatar) || m.avatar === senderAvatar || isOmniscientMember(m.avatar)
         );
 
         for (const member of membersToCheck) {
@@ -1756,6 +1763,7 @@ function updateUI() {
         $('#sc_prompt_preset').val(s.promptPreset);
         $('#sc_debug_mode').prop('checked', s.debugMode);
         $('#sc_trace_mode').prop('checked', s.traceMode);
+        $('#sc_preview_prompt').prop('checked', s.previewPrompt);
         $('#sc_strip_patterns').val((s.stripPatterns || []).join('\n'));
         $('#sc_summarizer_response_length').val(s.summarizerResponseLength || 0);
 
@@ -2022,7 +2030,29 @@ function updateSnippetBrowser() {
         btn.prop('disabled', true).removeClass('fa-rotate-right').addClass('fa-spinner fa-spin');
 
         try {
-            const storyTxt = buildPassageFromRange(chat, rangeStart, rangeEnd);
+            const presenceMode = isPresenceGroupMode();
+            let memberName = null;
+            let memberAvatar = null;
+
+            if (presenceMode) {
+                const avatar = getSelectedMemberAvatar();
+                if (avatar) {
+                    const members = getGroupMembers();
+                    const member = members.find(m => m.avatar === avatar);
+                    if (member) {
+                        memberName = member.name;
+                        memberAvatar = avatar;
+                    }
+                }
+                if (!memberName) {
+                    toastr.warning('Select a member with summaries above to regenerate.', 'Summaryception');
+                    return;
+                }
+            }
+
+            const storyTxt = presenceMode && memberAvatar
+                ? buildPresencePassage(chat, rangeStart, rangeEnd, memberAvatar)
+                : buildPassageFromRange(chat, rangeStart, rangeEnd);
 
             if (!storyTxt.trim()) {
                 toastr.error('Source turns are empty — cannot regenerate.', 'Summaryception');
@@ -2045,7 +2075,7 @@ function updateSnippetBrowser() {
                 progressBar: true,
             });
 
-            const newSummary = await callSummarizer(storyTxt, contextStr);
+            const newSummary = await callSummarizer(storyTxt, contextStr, memberName || undefined);
 
             if (!newSummary) {
                 toastr.error('Regeneration failed — original snippet kept.', 'Summaryception');
@@ -2187,6 +2217,11 @@ function bindUIEvents() {
 
     $(document).on('change', '#sc_trace_mode', function () {
         getSettings().traceMode = $(this).prop('checked');
+        saveSettings();
+    });
+
+    $(document).on('change', '#sc_preview_prompt', function () {
+        getSettings().previewPrompt = $(this).prop('checked');
         saveSettings();
     });
 
@@ -2739,6 +2774,7 @@ function bindUIEvents() {
         // Reset debug
         s.debugMode = defaultSettings.debugMode;
         s.traceMode = defaultSettings.traceMode;
+        s.previewPrompt = defaultSettings.previewPrompt;
 
         saveSettings();
         updateInjection();
@@ -3051,6 +3087,21 @@ async function fetchProfilesFallback(selectElement, currentValue) {
         setSummarizing: (v) => { isSummarizing = v; },
         updateInjection,
         updateUI,
+    });
+
+    initPromptPreview({ abortSummarization, log });
+
+    initHistoryDestroy({
+        getChatStore,
+        isPresenceGroupMode,
+        getGroupMembers,
+        getMemberStore,
+        unghostAllMessages,
+        saveChatStore,
+        ghostMessagesUpTo,
+        updateInjection,
+        updateUI,
+        log,
     });
 
     eventSource.on(event_types.APP_READY, () => {
